@@ -130,14 +130,31 @@
         code
       </li>
     </ul>
+
+<!--
+no need for type="text/javascript" on these lines. That's left over from IE days.
+-->
+
     <script
       type="text/javascript"
       src="./webgpufundamentals-timing.js"
     ></script>
     <!-- parses file -->
+
+    
     <script type="text/javascript" src="./OBJFile.js"></script>
     <!-- builds data structure -->
     <script type="text/javascript" src="./objload.js"></script>
+
+<!--
+    I write a lot of HTML inline scripts like this but just FYI, my experience is
+    many editors are happier and give more help when JavaScript is separated into
+    its own .js file
+
+    No idea what editor you're using and if you're running into any issues with
+    completions/suggestions.
+-->
+    
     <script type="module">
       // inspiration: https://webgpufundamentals.org/webgpu/lessons/webgpu-fundamentals.html
 
@@ -171,6 +188,58 @@
       // the reason I want a struct is so objects can be named and not "uniforms[5]"
       // Q: Is this the right way to do things or is it better to have different
       //   uniform structures for each kernel?
+
+/*
+That is really up to you. Sorry if this is too basic.
+Let's take C++. In my mind, I could make 2 independent functions
+
+    struct DataForFoo {
+       float velocity;
+       float acceleration;
+    };
+
+    void foo(const DataForBar params&) { ... }
+
+    struct DataForBar {
+       float mass;
+       float gravity;
+    };
+
+    void bar(const DataForBar params&) { ... }
+
+Or I have have one
+
+    struct DataForFooAnBar {
+       float velocity;
+       float acceleration;
+       float mass;
+       float gravity;
+    };
+
+    void foo(const DataForForAndBar params&) { ... // use params.velocty and params.acceleration }
+    void bar(const DataForForAndBar params&) { ... // use params.mass and params.gravity }
+
+I'd think 2 is clearer but I can imagine situations where I might want 1 (for example an array of struct Light)
+for lighting but different functions for directional light, point light, spot light, some of which will use
+different parameters than others.
+
+There's also the fact that you're experimenting. Juggling multiple uniformBuffers, arraybuffers, and views
+might require more organization than is worth it in an experiment.
+
+As for WebGPU in particular, there's no specific reason off the top of my head why one might be better than
+another except when they truely are shared.
+
+An example might be, in 3d rendering, the projeciton and view matrices are used in so many places, separating
+them into one shared uniform buffer is probably a win and then putting other uniforms in different buffers.
+
+In that case, it would also be better to put that binding in its own group. Then, at draw/dispatch time,
+you could call `setBindGroup(0, sharedStuff)` once and `setBindGroup(1, uniqueStuff)` per draw/dispatch.
+
+For your case of 5-6 draw/dispatch calls it's not going to make a noticable difference though.
+Also, you're only using these uniforms in one pipeline at the moment. I'm guessing you have other
+plans for them.
+*/
+      
       const uniforms_code = /* wgsl */ `
         struct MyUniforms {
           ROTATE_CAMERA_SPEED: f32,
@@ -187,6 +256,17 @@
        * "It's necessary for them to show up in defs.uniforms or defs.storages. You
        *  can use defs.structs to pull out a struct, separately from a group/binding (I think?)"
        */
+
+/*
+I think we covered this. As your comment mentions you can use uniforms_defs.structs.MyUniforms
+*/
+
+/*
+I'm not suggesting you change anything. Just an FYI, JavaScript is camelCase. All JavaScript APIs are camelCase.
+I know it's a prejudice on my part but when I see snake_case I think. Ah, not a JavaScript programmer 😅
+Note: Many of the Chromium and Dawn team are not JavaScript programmers 😂
+*/
+      
       const uniforms_defs = makeShaderDataDefinitions(uniforms_code);
       const uni = makeStructuredView(uniforms_defs.uniforms.myUniforms);
 
@@ -1041,6 +1121,55 @@
             "overall computation (perturb, face, edge, vertex) + graphics encoder",
         });
 
+/*
+You shouldn't need all of these passes.
+
+This should work and be faster.
+
+const pass = encoder.beginComputePass();
+
+pass.setPipeline(perturb_pipeline);
+pass.setBindGroup(0, perturb_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(mesh.level_count[0].v / WORKGROUP_SIZE)
+);
+
+pass.setPipeline(face_pipeline);
+pass.setBindGroup(0, face_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(mesh.level_count[1].f / WORKGROUP_SIZE)
+);
+
+pass.setPipeline(edge_pipeline);
+pass.setBindGroup(0, edge_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(mesh.level_count[1].e / WORKGROUP_SIZE)
+);
+
+pass.setPipeline(vertex_pipeline);
+pass.setBindGroup(0, vertex_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(mesh.level_count[1].v / WORKGROUP_SIZE)
+);
+
+pass.setPipeline(facet_normals_pipeline);
+pass.setBindGroup(0, facet_normals_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(
+    (base_triangles_count + subdiv_1_triangles_count) / WORKGROUP_SIZE
+  )
+);
+
+pass.setPipeline(vertex_normals_pipeline);
+pass.setBindGroup(0, vertex_normals_bind_group);
+pass.dispatchWorkgroups(
+  Math.ceil(vertices_size / WORKGROUP_SIZE)
+);
+
+pass.end();
+
+*/
+        
         const perturb_pass = encoder.beginComputePass({
           label: "perturb input vertices kernel compute pass",
         });
@@ -1132,6 +1261,16 @@
             {
               view: context.getCurrentTexture().createView(),
               loadOp: "clear",
+
+/*
+This is fine but I'm curious where you got it from.
+We've tried to convert most samples to
+
+    clearValue: [0, 0, 0.4, 1.0],
+
+As it's generally more useful to take an array.
+*/
+              
               clearValue: { r: 0, g: 0, b: 0.4, a: 1.0 },
               storeOp: "store",
             },
@@ -1179,6 +1318,24 @@
         // Finish encoding and submit the commands
         const command_buffer = encoder.finish();
         device.queue.submit([command_buffer]);
+
+  /*
+  I'm guessing these are here for debugging - I ask because they're really going
+  to slow down your frame rate. It might be better to pass in `?debug=true` or 
+  something in the URL which you can read with
+
+       const params = new URL(window.location.href).searchParams;
+       const debug = params.get('debug');  // string or undefined
+
+  If you have a bunch of params and you want them all as a JS object
+  this would work
+  
+       const params = Object.fromEntries(new URL(window.location.href).searchParams.entries());
+
+       if url is 'https://foo.com/bar.html?abc=123&def=456&xyz=banana` then params is
+
+       { abc: '123', def: '456', xyz: 'banana' }   // notice they are strings, not numbers.
+  */
 
         // Read the results
         await mappable_vertices_result_buffer.mapAsync(GPUMapMode.READ);
